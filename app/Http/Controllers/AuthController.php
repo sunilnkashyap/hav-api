@@ -3,11 +3,14 @@
 namespace App\Http\Controllers;
 
 use App\Mail\SendPasscode;
+use App\Models\UserDetails;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Carbon\Carbon;
 use App\Models\User;
 use App\Models\Passcode;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\Mail;
 use Throwable;
@@ -52,45 +55,97 @@ class AuthController extends Controller
   {
 
     $validator = Validator::make($request->all(), [
-      'role' => 'required|string',
-      'name' => 'required|string',
-      'email' => 'required|string|email|unique:users',
-      'passcode' => 'required|string'
+        'role' => 'required|string',
+        'name' => 'required|string',
+        'email' => 'required|string',
+
     ]);
-
-
 
     if ($validator->fails()) {
       return response()->json([
-        'message' => $validator->errors()
+          'message' => $validator->errors()
       ], 201);
-    }else{
-    //process the request
     }
 
-    $validate =  $this->getValidationFactory()->make($request->all(), [
-      'role' => 'required|string',
-      'name' => 'required|string',
-      'email' => 'required|string|email|unique:users',
-      'passcode' => 'required|string'
+    $month = array('01'=>'A','02'=>'B','03'=>'C','04'=>'D','05'=>'E','06'=>'F','07'=>'G','08'=>'H','09'=>'I','10'=>'J','11'=>'K','12'=>'L');
+    $m = null;
+    foreach($month as $key=>$item){
+      if($key == date('m')){
+        $m = $item;
+      }
+    }
+    $hav_id = 'HAV'.date('Y').$m.date('d').User::max('id'). + 1;
+    $verify_user = User::where('role',$request->role)->where('email',$request->email)->get();
+    if(count($verify_user)>0){
+      return response()->json([
+          'error'=>1,
+          'message'=>'User already exist'
+      ],201);
+    }
+
+    DB::beginTransaction();
+    try{
+      $user = new User();
+      $user->role = $request->role;
+      $user->name = $request->name;
+      $user->email = $request->email;
+      $user->email_verified_at = $request->email_verified_at;
+      $user->registration_step = 1;
+      $user->status ='Pending';
+      $user->hav_id = $hav_id;
+      $user->facebook_id = $request->facebook_id;
+      $user->google_id = $request->google_id;
+      if($user->save()){
+        $user_details = new UserDetails();
+        $user_details->user_id = $user->id;
+        $user_details->hav_id = $hav_id;
+        $user_details->save();
+      }
+      DB::commit();
+      return response()->json([
+          'error'=>0,
+          'message'=>'User register successfully',
+          'user_details'=>array('user_id'=>$user->id)
+      ],200);
+    }catch(\Exception $e){
+      DB::rollBack();
+      return response()->json([
+          'error'=>1,
+          'message'=>$e->getMessage()
+      ],201);
+    }
+  }
+
+  public function login(Request $request){
+    $validator = Validator::make($request->all(), [
+        'role' => 'required|string',
+        'password' => 'required|string',
+        'email' => 'required|string',
+
     ]);
-
-    return response()->json([
-      'message' => $validate
-    ], 201);
-
-    $user = new User([
-      'role' => $request->role,
-      'name' => $request->name,
-      'email' => $request->email,
-      'passcode' => base64_encode($request->password),
-      'registration_step' => 1,
-      'status' => 'Pending'
-    ]);
-
-    $user->save();
-    return response()->json([
-      'message' => 'Successfully created user!'
-    ], 201);
+    if ($validator->fails()) {
+      return response()->json([
+          'message' => $validator->errors()
+      ], 201);
+    }
+    $verify_user = User::where('email',$request->email)->where('role',$request->role)->get();
+    if(count($verify_user)> 0){
+      if(Hash::check($request->password,$verify_user[0]->password)){
+        return response()->json([
+            'error'=>0,
+            'message'=>'User logged in successfully'
+        ],200);
+      }else{
+        return response()->json([
+            'error'=>1,
+            'message'=>'Invalid Credentials ! Please check password again.'
+        ],201);
+      }
+    }else{
+      return response()->json([
+          'error'=>1,
+          'message'=>'User already exist'
+      ],201);
+    }
   }
 }
