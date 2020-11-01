@@ -51,14 +51,12 @@ class AuthController extends Controller
     ], 200);
   }
 
-  public function register(Request $request)
-  {
+  public function register(Request $request) {
 
     $validator = Validator::make($request->all(), [
         'role' => 'required|string',
         'name' => 'required|string',
         'email' => 'required|string',
-
     ]);
 
     if ($validator->fails()) {
@@ -67,20 +65,27 @@ class AuthController extends Controller
       ], 201);
     }
 
-    $month = array('01'=>'A','02'=>'B','03'=>'C','04'=>'D','05'=>'E','06'=>'F','07'=>'G','08'=>'H','09'=>'I','10'=>'J','11'=>'K','12'=>'L');
-    $m = null;
-    foreach($month as $key=>$item){
-      if($key == date('m')){
-        $m = $item;
-      }
+    try {
+      Passcode::where('email', $request->email)->where('passcode', $request->passcode)->firstOrFail();
+      Passcode::where('email', $request->email)->delete();
+    } catch(\Exception $e){
+      return response()->json([
+          'message' => 'Passcode does not match.'
+      ], 500);
     }
-    $hav_id = 'HAV'.date('Y').$m.date('d').User::max('id'). + 1;
-    $verify_user = User::where('role',$request->role)->where('email',$request->email)->get();
+
+    $monthLetter = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L'];
+
+    $currentMonth = Carbon::now()->month;
+
+    $hav_id = 'HAV' . date('Y') . $monthLetter[$currentMonth] . (User::max('id') + 1);
+
+    $verify_user = User::where('role', $request->role)->where('email', $request->email)->get();
+    
     if(count($verify_user)>0){
       return response()->json([
-          'error'=>1,
-          'message'=>'User already exist'
-      ],201);
+          'message' => 'User already registered, try to log in.'
+      ], 500);
     }
 
     DB::beginTransaction();
@@ -89,12 +94,13 @@ class AuthController extends Controller
       $user->role = $request->role;
       $user->name = $request->name;
       $user->email = $request->email;
-      $user->email_verified_at = $request->email_verified_at;
+      $user->email_verified_at = Carbon::now();
       $user->registration_step = 1;
       $user->status ='Pending';
       $user->hav_id = $hav_id;
       $user->facebook_id = $request->facebook_id;
       $user->google_id = $request->google_id;
+      
       if($user->save()){
         $user_details = new UserDetails();
         $user_details->user_id = $user->id;
@@ -103,16 +109,16 @@ class AuthController extends Controller
       }
       DB::commit();
       return response()->json([
-          'error'=>0,
-          'message'=>'User register successfully',
-          'user_details'=>array('user_id'=>$user->id)
+          'message' => 'User register successfully.',
+          'token' => $user->createToken('Health A Vision Personal Access Client')->accessToken,
+          'user' => $user
       ],200);
-    }catch(\Exception $e){
+
+    } catch(\Exception $e){
       DB::rollBack();
       return response()->json([
-          'error'=>1,
-          'message'=>$e->getMessage()
-      ],201);
+          'message' => $e->getMessage()
+      ], 500);
     }
   }
 
@@ -120,32 +126,50 @@ class AuthController extends Controller
     $validator = Validator::make($request->all(), [
         'role' => 'required|string',
         'password' => 'required|string',
-        'email' => 'required|string',
-
+        'email' => 'required|string'
     ]);
+
     if ($validator->fails()) {
       return response()->json([
           'message' => $validator->errors()
       ], 201);
     }
+
     $verify_user = User::where('email',$request->email)->where('role',$request->role)->get();
-    if(count($verify_user)> 0){
-      if(Hash::check($request->password,$verify_user[0]->password)){
-        return response()->json([
-            'error'=>0,
-            'message'=>'User logged in successfully'
-        ],200);
-      }else{
-        return response()->json([
-            'error'=>1,
+    
+    if(count($verify_user) > 0){
+
+      if($request->isPasscode) {
+        $check_passcode = Passcode::where('email', $request->email)->where('passcode', $request->password)->first();
+        if($check_passcode) {
+          return response()->json([
+            'message' => 'User logged in successfully.',
+            'token' => $verify_user[0]->createToken('Health A Vision Personal Access Client')->accessToken,
+            'user' => $verify_user[0]
+          ],200);
+        } else {
+          return response()->json([
+            'message' => 'Passcode does not match.'
+          ], 500);
+        }
+      } else {
+
+        if(Hash::check($request->password,$verify_user[0]->password)){
+          return response()->json([
+            'message' => 'User logged in successfully.',
+            'token' => $verify_user[0]->createToken('Health A Vision Personal Access Client')->accessToken,
+            'user' => $verify_user[0]
+          ],200);
+        } else {
+          return response()->json([
             'message'=>'Invalid Credentials ! Please check password again.'
-        ],201);
+          ], 500);
+        }
       }
-    }else{
+    } else {
       return response()->json([
-          'error'=>1,
-          'message'=>'User already exist'
-      ],201);
+        'message'=>'User does not exist.'
+      ], 500);
     }
   }
 }
